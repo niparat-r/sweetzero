@@ -1,0 +1,392 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { HashRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { Home, ScanLine, BookOpen, User, Trophy, Plus } from 'lucide-react';
+import { analyzeFoodImage } from './services/geminiService';
+import { UserProfile, FoodLog, Quest, AnalysisResult } from './types';
+import { Avatar } from './components/Avatar';
+import { ProgressBar } from './components/ProgressBar';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+
+// --- Components defined here to simplify file structure for this format ---
+
+// 1. Home View
+const HomeView: React.FC<{ 
+  user: UserProfile; 
+  todayLogs: FoodLog[]; 
+  sweetScore: number 
+}> = ({ user, todayLogs, sweetScore }) => {
+  const totalSugar = todayLogs.reduce((acc, log) => acc + log.sugarGrams, 0);
+  const data = todayLogs.map((log, i) => ({ name: i + 1, sugar: log.sugarGrams }));
+
+  return (
+    <div className="p-4 space-y-6 pb-24">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">Hello, {user.name}</h1>
+          <p className="text-gray-500 text-sm">Let's keep it sweet & low!</p>
+        </div>
+        <div className="flex items-center gap-2 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-100">
+            <span className="text-yellow-500 font-bold">🪙 {user.coins}</span>
+            <span className="text-blue-500 font-bold text-xs">Lvl {user.level}</span>
+        </div>
+      </div>
+
+      {/* SweetScore Card */}
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
+        <div>
+            <h2 className="text-gray-500 font-medium text-sm uppercase tracking-wide">Today's SweetScore</h2>
+            <div className={`text-5xl font-bold mt-2 ${sweetScore > 80 ? 'text-[#90BE6D]' : sweetScore < 50 ? 'text-[#FF6B6B]' : 'text-[#4CC9F0]'}`}>
+                {Math.round(sweetScore)}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Target: Keep above 80</p>
+        </div>
+        <Avatar score={sweetScore} size="lg" />
+      </div>
+
+      {/* Daily Progress */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+        <h3 className="font-semibold text-gray-700 mb-4">Sugar Limit</h3>
+        <ProgressBar 
+            current={totalSugar} 
+            max={user.dailySugarTarget} 
+            label="Daily Intake (g)" 
+            colorClass={totalSugar > user.dailySugarTarget ? "bg-[#FF6B6B]" : "bg-[#4CC9F0]"}
+        />
+        <div className="mt-4 text-xs text-gray-500 bg-blue-50 p-3 rounded-lg">
+            Tip: You have {Math.max(0, user.dailySugarTarget - totalSugar)}g remaining today.
+        </div>
+      </div>
+
+       {/* Quick Chart */}
+       {todayLogs.length > 0 && (
+           <div className="h-40 bg-white rounded-2xl p-4 shadow-sm">
+                <p className="text-xs font-bold text-gray-400 mb-2">Recent Intake</p>
+               <ResponsiveContainer width="100%" height="100%">
+                   <BarChart data={data}>
+                       <XAxis hide />
+                       <YAxis hide />
+                       <Tooltip 
+                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                       />
+                       <Bar dataKey="sugar" fill="#4CC9F0" radius={[4, 4, 0, 0]} />
+                   </BarChart>
+               </ResponsiveContainer>
+           </div>
+       )}
+    </div>
+  );
+};
+
+// 2. Scanner View
+const ScannerView: React.FC<{ onAddLog: (log: FoodLog) => void }> = ({ onAddLog }) => {
+  const [image, setImage] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImage(reader.result as string);
+        setResult(null); // Reset result on new image
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleAnalyze = async () => {
+    if (!image) return;
+    setAnalyzing(true);
+    try {
+      const base64Data = image.split(',')[1];
+      const data = await analyzeFoodImage(base64Data);
+      setResult(data);
+    } catch (err) {
+      alert("Failed to analyze image. Please try again.");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleSave = () => {
+    if (result) {
+      onAddLog({
+        id: Date.now().toString(),
+        foodName: result.foodName,
+        sugarGrams: result.sugarGrams,
+        calories: result.calories,
+        sugarLevel: result.sugarLevel,
+        advice: result.advice,
+        timestamp: Date.now()
+      });
+      // Reset
+      setImage(null);
+      setResult(null);
+      alert("Food logged successfully! +10 XP");
+    }
+  };
+
+  return (
+    <div className="p-4 pb-24 h-full flex flex-col">
+      <h2 className="text-xl font-bold text-gray-800 mb-4">AI Sugar Scanner</h2>
+      
+      {!image ? (
+        <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-2xl bg-gray-50 p-8">
+            <div className="bg-blue-100 p-4 rounded-full mb-4">
+                <ScanLine className="text-[#4CC9F0]" size={48} />
+            </div>
+            <p className="text-gray-500 text-center mb-6">Take a photo of your food to reveal hidden sugars.</p>
+            <label className="bg-[#4CC9F0] text-white px-6 py-3 rounded-full font-bold shadow-lg active:scale-95 transition-transform cursor-pointer">
+                Tap to Scan
+                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
+            </label>
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col">
+            <div className="relative rounded-2xl overflow-hidden shadow-md mb-6 max-h-[40vh]">
+                <img src={image} alt="Food Preview" className="w-full h-full object-cover" />
+                <button 
+                    onClick={() => setImage(null)}
+                    className="absolute top-2 right-2 bg-black/50 text-white p-1 rounded-full"
+                >
+                    <Plus className="rotate-45" />
+                </button>
+            </div>
+
+            {analyzing ? (
+                <div className="flex flex-col items-center justify-center py-10">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#4CC9F0] mb-4"></div>
+                    <p className="text-gray-500 animate-pulse">AI is analyzing sugar content...</p>
+                </div>
+            ) : result ? (
+                <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100 flex-1">
+                    <div className="flex justify-between items-start mb-4">
+                        <h3 className="text-2xl font-bold text-gray-800">{result.foodName}</h3>
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                            result.sugarLevel === 'HIGH' ? 'bg-red-100 text-red-600' :
+                            result.sugarLevel === 'MEDIUM' ? 'bg-yellow-100 text-yellow-600' :
+                            'bg-green-100 text-green-600'
+                        }`}>
+                            {result.sugarLevel} SUGAR
+                        </span>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="bg-blue-50 p-4 rounded-xl">
+                            <p className="text-gray-500 text-xs">Sugar</p>
+                            <p className="text-2xl font-bold text-[#4CC9F0]">{result.sugarGrams}g</p>
+                        </div>
+                        <div className="bg-orange-50 p-4 rounded-xl">
+                            <p className="text-gray-500 text-xs">Calories</p>
+                            <p className="text-2xl font-bold text-orange-400">{result.calories}</p>
+                        </div>
+                    </div>
+
+                    <p className="text-gray-600 text-sm italic mb-6">"{result.advice}"</p>
+
+                    <button 
+                        onClick={handleSave}
+                        className="w-full bg-[#90BE6D] text-white py-4 rounded-xl font-bold shadow-md active:scale-95 transition-transform"
+                    >
+                        Add to Log
+                    </button>
+                </div>
+            ) : (
+                <button 
+                    onClick={handleAnalyze}
+                    className="w-full bg-[#4CC9F0] text-white py-4 rounded-xl font-bold shadow-md active:scale-95 transition-transform mt-auto"
+                >
+                    Analyze Photo
+                </button>
+            )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// 3. Quests View
+const QuestsView: React.FC<{ quests: Quest[]; onComplete: (id: string) => void }> = ({ quests, onComplete }) => {
+    return (
+        <div className="p-4 pb-24">
+            <div className="mb-6">
+                <h2 className="text-2xl font-bold text-gray-800">Daily Quests</h2>
+                <p className="text-gray-500 text-sm">Complete tasks to earn XP & Coins!</p>
+            </div>
+
+            <div className="space-y-4">
+                {quests.map(quest => (
+                    <div 
+                        key={quest.id} 
+                        className={`p-4 rounded-2xl border transition-all ${
+                            quest.isCompleted 
+                            ? 'bg-gray-100 border-gray-200 opacity-60' 
+                            : 'bg-white border-gray-100 shadow-sm'
+                        }`}
+                    >
+                        <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-lg ${quest.isCompleted ? 'bg-gray-200' : 'bg-[#e0f7fa] text-[#4CC9F0]'}`}>
+                                    <Trophy size={20} />
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-gray-800">{quest.title}</h3>
+                                    <p className="text-xs text-gray-500">{quest.description}</p>
+                                </div>
+                            </div>
+                            <div className="text-right">
+                                <div className="text-xs font-bold text-yellow-500">+{quest.coinReward} 🪙</div>
+                                <div className="text-xs font-bold text-blue-500">+{quest.xpReward} XP</div>
+                            </div>
+                        </div>
+                        {!quest.isCompleted && (
+                            <button 
+                                onClick={() => onComplete(quest.id)}
+                                className="w-full mt-3 bg-white border border-[#4CC9F0] text-[#4CC9F0] py-2 rounded-lg text-sm font-semibold hover:bg-[#4CC9F0] hover:text-white transition-colors"
+                            >
+                                Claim Reward
+                            </button>
+                        )}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+// 4. Navigation Component
+const BottomNav = () => {
+    const location = useLocation();
+    const isActive = (path: string) => location.pathname === path;
+    
+    const navItems = [
+        { path: '/', icon: Home, label: 'Home' },
+        { path: '/scan', icon: ScanLine, label: 'Scan' },
+        { path: '/quests', icon: Trophy, label: 'Quests' },
+        { path: '/learn', icon: BookOpen, label: 'Learn' },
+        { path: '/profile', icon: User, label: 'Profile' },
+    ];
+
+    return (
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-2 pb-5 flex justify-between items-center z-50 shadow-[0_-5px_15px_rgba(0,0,0,0.02)]">
+            {navItems.map((item) => {
+                const ActiveIcon = item.icon;
+                const active = isActive(item.path);
+                return (
+                    <NavLink 
+                        key={item.path} 
+                        to={item.path}
+                        className={`flex flex-col items-center gap-1 transition-colors ${active ? 'text-[#4CC9F0]' : 'text-gray-400'}`}
+                    >
+                        <ActiveIcon size={active ? 24 : 22} strokeWidth={active ? 2.5 : 2} />
+                        <span className="text-[10px] font-medium">{item.label}</span>
+                    </NavLink>
+                );
+            })}
+        </div>
+    );
+};
+
+// Main App Component
+const AppContent: React.FC = () => {
+    // Mock Data & State
+    const [user, setUser] = useState<UserProfile>({
+        name: "Alex",
+        age: 25,
+        weight: 70,
+        height: 175,
+        dailySugarTarget: 30, // 30g is reasonable limit
+        xp: 120,
+        level: 3,
+        coins: 450
+    });
+
+    const [quests, setQuests] = useState<Quest[]>([
+        { id: '1', title: 'Water Warrior', description: 'Drink 2L of water today', xpReward: 50, coinReward: 20, isCompleted: false, type: 'daily' },
+        { id: '2', title: 'Zero Soda', description: 'No sugary drinks for 24h', xpReward: 100, coinReward: 50, isCompleted: false, type: 'daily' },
+        { id: '3', title: 'Fruit Swap', description: 'Eat fruit instead of candy', xpReward: 30, coinReward: 10, isCompleted: true, type: 'daily' },
+    ]);
+
+    const [logs, setLogs] = useState<FoodLog[]>([]);
+
+    const addFoodLog = (log: FoodLog) => {
+        setLogs(prev => [log, ...prev]);
+        // Gamification: Add XP for logging
+        setUser(prev => ({ ...prev, xp: prev.xp + 10, coins: prev.coins + 5 }));
+    };
+
+    const completeQuest = (id: string) => {
+        setQuests(prev => prev.map(q => {
+            if (q.id === id && !q.isCompleted) {
+                // Add rewards
+                setUser(u => ({ ...u, xp: u.xp + q.xpReward, coins: u.coins + q.coinReward }));
+                return { ...q, isCompleted: true };
+            }
+            return q;
+        }));
+    };
+
+    // Calculate SweetScore (0-100)
+    // Formula: Starts at 100. Deducts points based on % of daily limit consumed.
+    // If sugar intake > limit, score drops rapidly.
+    const calculateSweetScore = useCallback(() => {
+        const totalSugar = logs.reduce((acc, l) => acc + l.sugarGrams, 0);
+        const percentage = (totalSugar / user.dailySugarTarget);
+        
+        let score = 100;
+        if (percentage <= 0.5) {
+            score = 100;
+        } else if (percentage <= 1.0) {
+            // Linear drop from 100 to 50 between 50% and 100% of limit
+            score = 100 - ((percentage - 0.5) * 100);
+        } else {
+            // Rapid drop if over limit
+            score = Math.max(0, 50 - ((percentage - 1.0) * 100));
+        }
+        return score;
+    }, [logs, user.dailySugarTarget]);
+
+    const sweetScore = calculateSweetScore();
+
+    return (
+        <div className="min-h-screen bg-[#F7FBFF] max-w-md mx-auto relative shadow-2xl overflow-hidden">
+            <Routes>
+                <Route path="/" element={<HomeView user={user} todayLogs={logs} sweetScore={sweetScore} />} />
+                <Route path="/scan" element={<ScannerView onAddLog={addFoodLog} />} />
+                <Route path="/quests" element={<QuestsView quests={quests} onComplete={completeQuest} />} />
+                <Route path="/learn" element={
+                    <div className="p-4 text-center pt-20">
+                        <BookOpen size={48} className="mx-auto text-[#4CC9F0] mb-4"/>
+                        <h2 className="text-xl font-bold mb-2">Learning Modules</h2>
+                        <p className="text-gray-500">Coming soon! Learn about hidden sugars in sauces and beverages.</p>
+                    </div>
+                } />
+                <Route path="/profile" element={
+                     <div className="p-4 text-center pt-20">
+                     <User size={48} className="mx-auto text-[#4CC9F0] mb-4"/>
+                     <h2 className="text-xl font-bold mb-2">{user.name}</h2>
+                     <p className="text-gray-500">Level {user.level} Health Warrior</p>
+                     <div className="mt-8 bg-white p-4 rounded-xl text-left">
+                        <h3 className="font-bold mb-2">Stats</h3>
+                        <p className="text-sm text-gray-600">Daily Target: {user.dailySugarTarget}g</p>
+                        <p className="text-sm text-gray-600">Total Coins: {user.coins}</p>
+                     </div>
+                 </div>
+                } />
+            </Routes>
+            <BottomNav />
+        </div>
+    );
+};
+
+function App() {
+  return (
+    <HashRouter>
+        <AppContent />
+    </HashRouter>
+  );
+}
+
+export default App;
